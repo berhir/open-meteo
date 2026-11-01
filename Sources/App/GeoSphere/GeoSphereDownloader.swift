@@ -384,7 +384,6 @@ struct GeoSphereDownloader: AsyncCommand {
             }
         }
 
-        /// `snowlmt` is above sea level, although its description says above ground
         let simpleVariables: [(ncName: String, omVar: GeoSphereVariable, multiply: Float?)] = [
             ("2t", .temperature_2m, nil),
             ("min_2t", .temperature_2m_min, nil),
@@ -404,7 +403,6 @@ struct GeoSphereDownloader: AsyncCommand {
             ("sd", .snow_depth_water_equivalent, nil),
             ("sund", .sunshine_duration, nil),
             ("10fg", .wind_gusts_10m, nil),
-            ("snowlmt", .snowfall_height, nil),
             ("msl", .pressure_msl, 0.01), // Pa -> hPa
         ]
 
@@ -418,6 +416,22 @@ struct GeoSphereDownloader: AsyncCommand {
                 spatial.data.multiplyAdd(multiply: multiply, add: 0)
             }
             try await write(omVar, spatial)
+        }
+
+        if onlyVariables?.contains(.surface(.snowfall_height)) ?? true {
+            logger.info("Lowering snowfall height below grid-cell elevation")
+            var snowfallHeight = try read("snowlmt")
+            let temperature = try read("2t")
+            let geopotential = try read("zsurf")
+            for i in snowfallHeight.data.indices {
+                let elevation = geopotential.data[i] / 9.80665
+                // `snowlmt` is already above sea level, although its description says above ground.
+                // Use subzero temperature to extend the snowfall limit below grid-cell elevation.
+                if snowfallHeight.data[i] - elevation < 20 && temperature.data[i] < 0 {
+                    snowfallHeight.data[i] += temperature.data[i] * 0.7 * 100
+                }
+            }
+            try await write(.snowfall_height, snowfallHeight)
         }
 
         let writeWindSpeed = onlyVariables?.contains(.surface(.wind_speed_10m)) ?? true
